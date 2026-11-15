@@ -1,0 +1,79 @@
+# 🚗 AUTOSAR-Style ECU — CAN & UDS Diagnostics
+
+![C11](https://img.shields.io/badge/C-11-blue) ![AUTOSAR](https://img.shields.io/badge/AUTOSAR-Classic-brightgreen) ![CAN](https://img.shields.io/badge/CAN%20%2F%20CAN--FD-bus-orange) ![UDS](https://img.shields.io/badge/UDS-ISO%2014229-red) ![Build](https://img.shields.io/badge/build-passing-success)
+
+AUTOSAR Classic-style ECU software in C: **CAN signal pack/unpack** and a **UDS (ISO 14229) diagnostic handler** — session control, ECU reset, read-data-by-identifier and DTC reading, with correct negative responses.
+
+*Personal project based on professional automotive embedded experience at L&T Technology Services — no employer code.*
+
+## ✨ Highlights
+- CAN frame pack → hex → unpack round-trip **PASS** (speed 87.50 km/h, 3200 RPM, throttle 42%, coolant 92 °C)
+- UDS sequence demo with hex + plain-English interpretation, including wrong-session and unsupported-service negative responses (`0x7F`)
+- Stored DTC returned in extended session: `59 02 FF 01 23 45 2F`
+
+## Code, Build & Sample Output
+
+Real, runnable C code lives in `src/` — not just a description:
+
+- `src/can_uds.h` / `src/can_uds.c` — a Com-like CAN signal layer and a Dcm-like UDS (ISO 14229) handler:
+  - **CAN packing:** `PowertrainStatus` frame (ID `0x100`, 8 bytes, Intel byte order) with vehicle speed (16-bit, factor 0.01), engine RPM (16-bit), throttle (8-bit), and coolant temperature (8-bit, offset −40), plus pack/unpack round-trip.
+  - **UDS services:** Diagnostic Session Control `0x10`, ECU Reset `0x11`, Read Data By Identifier `0x22` (VIN DID `0xF190`, vehicle-speed DID `0x0100`, engine-RPM DID `0x0101`), and Read DTC Information `0x19` (one stored DTC, extended session only) — with negative responses `0x7F` for an unsupported service (`0x2E` → NRC `0x11`) and for a service requested in the wrong session (`0x19` in the default session → NRC `0x7F`).
+- `src/main.c` — a deterministic demo that packs/unpacks the CAN frame and then runs a 7-step UDS request sequence, printing every request/response as hex with a plain-English interpretation.
+
+### Build & run
+
+```bash
+make            # gcc -std=c11 -Wall -Wextra -O2 -Isrc -o autosar_demo src/main.c src/can_uds.c
+./autosar_demo  # or: make run
+```
+
+### Sample output (actual run)
+
+```text
+=== AUTOSAR Classic-style ECU demo: CAN + UDS ===
+
+--- CAN: PowertrainStatus (ID 0x100, 8 bytes, Intel) ---
+Input signals: speed=87.50 km/h, rpm=3200, throttle=42 %, coolant=92 C
+Packed CAN frame: 2E 22 80 0C 2A 84 00 00
+Unpacked signals: speed=87.50 km/h, rpm=3200, throttle=42 %, coolant=92 C
+Round-trip check: PASS (decoded values match inputs)
+
+--- UDS (ISO 14229) diagnostic session ---
+ECU starts in the DEFAULT session.
+-- 1. ReadDataByIdentifier - VIN (DID 0xF190)
+   Req : 22 F1 90
+   Resp: 62 F1 90 31 48 47 43 4D 38 32 36 33 33 41 30 30 34 33 35 32
+   -> Positive response 0x62: VIN = "1HGCM82633A004352" (17 chars after the DID).
+-- 2. ReadDTCInformation in the DEFAULT session (wrong session)
+   Req : 19 02 FF
+   Resp: 7F 19 7F
+   -> Negative response 0x7F 0x19 0x7F: service not supported in the active session.
+-- 3. DiagnosticSessionControl - enter EXTENDED session (0x03)
+   Req : 10 03
+   Resp: 50 03 00 32 01 F4
+   -> Positive response 0x50: extended session, P2 = 50 ms (0x0032), P2* = 5000 ms (0x01F4).
+-- 4. ReadDTCInformation - report DTCs by status mask 0xFF
+   Req : 19 02 FF
+   Resp: 59 02 FF 01 23 45 2F
+   -> Positive response 0x59: 1 stored DTC, 0x012345, statusOfDTC = 0x2F.
+-- 5. ReadDataByIdentifier - vehicle speed (DID 0x0100)
+   Req : 22 01 00
+   Resp: 62 01 00 22 2E
+   -> Positive response 0x62: raw 0x222E = 8750 -> 87.50 km/h (factor 0.01).
+-- 6. WriteDataByIdentifier (0x2E) - not implemented
+   Req : 2E 01 00 00
+   Resp: 7F 2E 11
+   -> Negative response 0x7F 0x2E 0x11: service not supported.
+-- 7. ECUReset - hard reset (0x01)
+   Req : 11 01
+   Resp: 51 01
+   -> Positive response 0x51: reset requested, ECU returns to the DEFAULT session.
+
+Demo complete. Final session = 0x01 (default), reset_requested = yes
+```
+
+The same captured output is saved in `sample_output.txt`.
+
+
+---
+*Created by Rohith Reddy Chinthala — Embedded Software Engineer at Honeywell, Saint Louis, MO.*
